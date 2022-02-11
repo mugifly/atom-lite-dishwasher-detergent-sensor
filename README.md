@@ -50,4 +50,7 @@ NOTE: After using the detergent, it will turn off after 1.5 hours. / 洗剤を�
 
 ## Dependencies / 依存ライブラリ
 
+- [M5Atom](https://github.com/m5stack/M5Atom)
+- [ArduinoJSON](https://arduinojson.org/)
+- [WiFiManager](https://github.com/tzapu/WiFiManager) 
 - [HX711 Arduino Library](https://github.com/bogde/HX711)

@@ -1,11 +1,22 @@
 // atom-lite-dishwasher-detergent-sensor
 // https://github.com/mugifly/atom-lite-dishwasher-detergent-sensor
 
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <FS.h>
+#include <SPIFFS.h>
+
 // M5Atom v0.0.2 - https://github.com/m5stack/M5Atom
 #include "M5Atom.h"
 
 // HX711 Arduino Library v0.7.5 - https://github.com/bogde/HX711
 #include "HX711.h"
+
+// WiFiManager v2.0.5-beta - https://github.com/tzapu/WiFiManager
+#include "WiFiManager.h"
+
+// ArduinoJSON v6.18.2 - https://arduinojson.org/
+#include "ArduinoJson.h"
 
 // Configurations
 #define LOADCELL_DOUT_PIN 32
@@ -18,14 +29,30 @@
 #define DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM 100
 #define DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM 8
 #define DETERGENT_MIN_USAGE_THRESHOLD_WEIGHT_GRAM 5
-#define DETERGENT_USAGE_RESETTING_INTERVAL_MILISEC 5400000 // 1.5 hours
+#define DETERGENT_USAGE_RESETTING_INTERVAL_MILISEC 5400000 // Reset the status after 1.5 hours passed after using detergent
+
+#define INTEGRATION_HASSIO_STATUS_SENDING_MIN_INTERVAL_MILISEC 300000 // Send status after 5 min even if there is no update
 
 // Loadcell sensor (scale)
 HX711 loadcell;
 float detergentBottleWeight = 0.0;
+float rawWeight = 0.0;
+
+// For Integration with IFTTT / Home Assistant (Hass.io)
+WiFiManager wifiManager;
+WiFiManagerParameter wifiManagerCustomField;
+char integrationHassioHost[255] = "";
+char integrationHassioToken[255] = "";
+char integrationHassioEntityId[255] = "";
+char integrationIFTTTEventName[255] = "";
+char integrationIFTTTKey[255] = "";
+unsigned long integrationHassioLastStatusSentAt = 0L;
+unsigned long integrationIFTTTLastStatusSentAt = 0L;
 
 // Status
 enum Status {
+  // Initialized
+  INITIALIZED,
   // LED is turn off
   DETERGENT_NOT_USED,
   // LED is blinking white
@@ -39,28 +66,122 @@ enum Status {
   // LED is blinking red
   MEASURED_WEIGHT_INVALID, // Fast blinking
 };
-Status status = DETERGENT_NOT_USED;
+Status status = INITIALIZED;
 unsigned long statusUpdatedAt = 0L;
 
 void setup() {
   M5.begin(true, false, true);
 
+  Serial.begin(115200);
+
   loadcell.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   loadcell.set_scale(LOADCELL_DIVIDER);
   loadcell.set_offset(LOADCELL_OFFSET);
+
+  SPIFFS.begin(true);
+
+  WiFi.mode(WIFI_STA);
+
+  wifiManager.setConfigPortalBlocking(false);
+
+  const char* custom_html =
+    "<h2 style=\"margin: 0.2rem 0 0 0;\">Integration</h2><h3>Home Assistant</h3>URL of Home Assistant:<br/><input type=\"text\" name=\"hassio_host\" placeholder=\"https://example.com/\"><br/>Access Token:<br/><input type=\"text\" name=\"hassio_token\" placeholder=\"XXXXXXXXXXXXXXXXXXXXXX\"><br/>Entity ID (sensor.XXXXXX):<br/><input type=\"text\" name=\"hassio_entity_id\" placeholder=\"dishwasher_detergent\" value=\"dishwasher_detergent\"><br/><h3>IFTTT</h3>Webhook Event Name:<br/><input type=\"text\" name=\"ifttt_event_name\" value=\"detergent_updated\" placeholder=\"detergent_updated\"><br/>Webhooks Key:<br/><input type=\"text\" name=\"ifttt_key\" placeholder=\"XXXXXXXXXXXXXXXXXXXXXX\"><br/><hr/>";
+  new (&wifiManagerCustomField) WiFiManagerParameter(custom_html);
+  wifiManager.addParameter(&wifiManagerCustomField);
+  wifiManager.setSaveParamsCallback(wifiManagerSaveParamCallback);
+
+  bool res = wifiManager.autoConnect("dishwasher-detergent-sensor");
+  if (!res) { // Failed to connect to configurated Wi-Fi access point. Instead, It will be works as self access point.
+    Serial.println("Failed to connect to Wi-Fi. Starting self access point.");
+    return;
+  }
+
+  // Now, connected to configured Wi-Fi access point.
+  Serial.println("Connected to Wi-Fi.");
+  M5.dis.drawpix(0, 0x0000f0); // LED is blinking blue
+  delay(500);
+
+  // Load config for integration
+  loadConfig();
+
+}
+
+void loadConfig() {
+  Serial.println("loadConfig");
+
+  File file = SPIFFS.open("/config.json", "r");
+  if (!file) {
+    Serial.println("Error: config.json not found");
+  }
+
+  size_t fileSize = file.size();
+  std::unique_ptr<char[]> buffer(new char[fileSize]);
+  file.readBytes(buffer.get(), fileSize);
+
+  DynamicJsonDocument json(1024);
+  if (deserializeJson(json, buffer.get())) {
+    Serial.println("Error: Could not parse JSON");
+    return;
+  }
+
+  strcpy(integrationHassioHost, json["hassio_host"]);
+  strcpy(integrationHassioToken, json["hassio_token"]);
+  strcpy(integrationHassioEntityId, json["hassio_entity_id"]);
+  strcpy(integrationIFTTTEventName, json["ifttt_event_name"]);
+  strcpy(integrationIFTTTKey, json["ifttt_key"]);
+  Serial.println("hassio_host = " + String(integrationHassioHost));
+  Serial.println("hassio_token = " + String(integrationHassioToken));
+  Serial.println("hassio_entity_id = " + String(integrationHassioEntityId));
+  Serial.println("ifttt_event_name = " + String(integrationIFTTTEventName));
+  Serial.println("ifttt_key = " + String(integrationIFTTTKey));
+
+  file.close();
+}
+
+String getWifiManagerParam(String name) {
+  String value;
+  if (wifiManager.server->hasArg(name)) {
+    value = wifiManager.server->arg(name);
+    value.trim();
+  }
+  return value;
+}
+
+void wifiManagerSaveParamCallback() {
+  Serial.println("wifiManagerSaveParamCallback - Saving config to SPIFFS...");
+  DynamicJsonDocument json(1024);
+  json["hassio_host"] = getWifiManagerParam("hassio_host");
+  json["hassio_token"] = getWifiManagerParam("hassio_token");
+  json["hassio_entity_id"] = getWifiManagerParam("hassio_entity_id");
+  json["ifttt_event_name"] = getWifiManagerParam("ifttt_event_name");
+  json["ifttt_key"] = getWifiManagerParam("ifttt_key");
+
+  File file = SPIFFS.open("/config.json", "w");
+  if (!file) {
+    Serial.println("Error: Could not open config.json");
+    return;
+  }
+  serializeJson(json, Serial);
+  serializeJson(json, file);
+  file.close();
+
+  Serial.println("wifiManagerSaveParamCallback - Config saved");
+
+  loadConfig();
 }
 
 void resetLoadcell() {
   loadcell.tare(10);
   status = LOADCELL_RESETTED;
-  detergentBottleWeight = loadcell.get_units(10);
+  rawWeight = loadcell.get_units(10);
+  detergentBottleWeight = rawWeight;
 }
 
 void measureRemainingAmount() {
   unsigned long now = millis();
-  float weight = loadcell.get_units(10);
+  rawWeight = loadcell.get_units(10);
 
-  if (abs(detergentBottleWeight - weight) <= 1) { // weight is almost not changed
+  if (abs(detergentBottleWeight - rawWeight) <= 1) { // weight is almost not changed
     switch (status) {
       case DETERGENT_USUALLY_USED:
       case DETERGENT_EXTRA_USED:
@@ -70,35 +191,146 @@ void measureRemainingAmount() {
           // Reset status to "detergent is not used"
           status = DETERGENT_NOT_USED;
           statusUpdatedAt = now;
+          // Send status to integration
+          sendStatusToHomeAssistant(true);
+          sendStatusToIFTTT();
         }
         break;
     };
     return;
   }
 
-  if (weight <= LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM) {
-    status = MEASURED_WEIGHT_INVALID;
-  } else if (weight <= detergentBottleWeight - DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM) { // a lot of used
-    if (weight <= DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM) {
-      status = DETERGENT_EXTRA_USED_AND_ONLY_FEW_LEFT;
+  Status newStatus = status;
+  if (rawWeight <= LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM) {
+    newStatus = MEASURED_WEIGHT_INVALID;
+  } else if (rawWeight <= detergentBottleWeight - DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM) { // a lot of used
+    if (rawWeight <= DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM) {
+      newStatus = DETERGENT_EXTRA_USED_AND_ONLY_FEW_LEFT;
     } else {
-      status = DETERGENT_EXTRA_USED;
+      newStatus = DETERGENT_EXTRA_USED;
     }
-  } else if (weight <= detergentBottleWeight - DETERGENT_MIN_USAGE_THRESHOLD_WEIGHT_GRAM) { // usually used
-    if (weight <= DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM) {
-      status = DETERGENT_USUALLY_USED_AND_ONLY_FEW_LEFT;
+  } else if (rawWeight <= detergentBottleWeight - DETERGENT_MIN_USAGE_THRESHOLD_WEIGHT_GRAM) { // usually used
+    if (rawWeight <= DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM) {
+      newStatus = DETERGENT_USUALLY_USED_AND_ONLY_FEW_LEFT;
     } else {
-      status = DETERGENT_USUALLY_USED;
+      newStatus = DETERGENT_USUALLY_USED;
     }
   } else { // Not used or replenished
-    status = DETERGENT_NOT_USED;
-  }
-    
-  statusUpdatedAt = now;
-  if (status != MEASURED_WEIGHT_INVALID) {
-    detergentBottleWeight = weight;
+    newStatus = DETERGENT_NOT_USED;
   }
 
+  if (newStatus != MEASURED_WEIGHT_INVALID) {
+    detergentBottleWeight = rawWeight;
+  }
+
+  bool statusChanged = (status != newStatus);
+  status = newStatus;
+  if (statusChanged) statusUpdatedAt = now;
+
+  // Send status to integration
+  sendStatusToHomeAssistant(statusChanged);
+  if (statusChanged) {
+    sendStatusToIFTTT();
+  }
+}
+
+void sendStatusToHomeAssistant(bool statusChanged) {
+  if (WiFi.status() != WL_CONNECTED || strlen(integrationHassioHost) <= 0 || strlen(integrationHassioToken) <= 0 || strlen(integrationHassioEntityId) <= 0) {
+    Serial.println("sendStatusToHomeAssistant - Canceled");
+    return;
+  }
+
+  unsigned long now = millis();
+  if (!statusChanged && now - integrationHassioLastStatusSentAt <= INTEGRATION_HASSIO_STATUS_SENDING_MIN_INTERVAL_MILISEC) {
+    return;
+  }
+
+  String baseUrl = integrationHassioHost;
+  String token = integrationHassioToken;
+  String entityId = integrationHassioEntityId;
+  String statusText = getIntegrationStatusText();
+
+  Serial.println("sendStatusToHomeAssistant - Requesting...");
+  integrationHassioLastStatusSentAt = now;
+  
+  if (baseUrl.charAt(baseUrl.length() - 1) != '/') {
+    baseUrl += "/";
+  }
+  String url = baseUrl + "api/states/sensor." + entityId;
+  Serial.println(url);
+
+  char postBody[255];
+  sprintf(postBody, "{\"state\": \"%s\", \"attributes\": {\"rawWeight\": %f, \"bottleWeight\": %f, \"time\": %u, \"statusUpdatedAt\": %u}}", statusText.c_str(), rawWeight, detergentBottleWeight, millis(), statusUpdatedAt);
+  Serial.println(postBody);
+
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Authorization", "Bearer " + String(token));
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Content-Length", String(strlen(postBody)));
+  int httpCode = http.POST(postBody);
+  Serial.println("sendStatusToHomeAssistant - Result = " + String(httpCode));
+  http.end();
+}
+
+void sendStatusToIFTTT() {
+  if (WiFi.status() != WL_CONNECTED || strlen(integrationIFTTTKey) <= 0 || strlen(integrationIFTTTEventName) <= 0) {
+    Serial.println("sendStatusToIFTTT - Canceled");
+    return;
+  }
+
+  String eventName = integrationIFTTTEventName;
+  String key = integrationIFTTTKey;
+  String statusText = getIntegrationStatusText();
+
+  Serial.println("sendStatusToIFTTT - Requesting...");
+  integrationIFTTTLastStatusSentAt = millis();
+
+  String url = "https://maker.ifttt.com/trigger/" + eventName + "/with/key/" + key;
+  Serial.println(url);
+
+  char postBody[255];
+  sprintf(postBody, "{\"value1\": \"%s\", \"value2\": %f, \"value3\": %u}", statusText.c_str(), detergentBottleWeight, statusUpdatedAt);
+  Serial.println(postBody);
+
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Content-Length", String(strlen(postBody)));
+  int httpCode = http.POST(postBody);
+  Serial.println("sendStatusToIFTTT - Result = " + String(httpCode));
+  http.end();
+}
+
+String getIntegrationStatusText() {
+  String statusText = "UNKNOWN";
+  switch (status) {
+    case LOADCELL_RESETTED:
+      statusText = "RESETTED";
+      break;
+    case DETERGENT_NOT_USED:
+      statusText = "NOT_USED";
+      break;
+    case DETERGENT_USUALLY_USED:
+      statusText = "USUALLY_USED";
+      break;
+    case DETERGENT_EXTRA_USED:
+      statusText = "EXTRA_USED";
+      break;
+    case DETERGENT_USUALLY_USED_AND_ONLY_FEW_LEFT:
+      statusText = "USUALLY_USED_AND_ONLY_FEW_LEFT";
+      break;
+    case DETERGENT_EXTRA_USED_AND_ONLY_FEW_LEFT:
+      statusText = "EXTRA_USED_AND_ONLY_FEW_LEFT";
+      break;
+    case MEASURED_WEIGHT_INVALID:
+      statusText = "INVALID";
+      break;
+    default:
+      statusText = "UNKNOWN";
+      break;
+  };
+  return statusText;
 }
 
 void showStatus() {
@@ -161,11 +393,21 @@ void showStatus() {
 
 }
 
+void resetWiFiSettings() {
+  M5.dis.drawpix(0, 0x0000f0); // LED is lights blue
+  delay(2000);
+  wifiManager.resetSettings();
+  ESP.restart();
+}
+
 void loop() {
   M5.update();
+  wifiManager.process();
 
   // Set status
-  if (M5.Btn.wasPressed()) {
+  if (M5.Btn.pressedFor(5000)) {
+    resetWiFiSettings();
+  } else if (M5.Btn.wasPressed()) {
     resetLoadcell();
   } else {
     measureRemainingAmount();
