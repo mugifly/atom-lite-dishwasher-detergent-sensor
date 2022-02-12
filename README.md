@@ -43,11 +43,11 @@ https://youtu.be/9q-ngajI_L4
    - DOUT (to G25) / DOUT (G25 ピンへ)
    - SCK (to G21) / SCK (G21 ピンへ)
 
-2. Install [esptool](https://github.com/espressif/esptool/releases) on your PC. <br>/ PC に [https://github.com/espressif/esptool/releases](esptool) をインストールします。
+2. Install [esptool](https://github.com/espressif/esptool/releases) on your PC.<br> / PC に [esptool](https://github.com/espressif/esptool/releases) をインストールします。
 
-3. Download zip file from [Releases](https://github.com/mugifly/atom-lite-dishwasher-detergent-sensor/releases) then, unarchive it. / [Releases](https://github.com/mugifly/atom-lite-dishwasher-detergent-sensor/releases) から ZIP ファイルをダウンロードし、展開します。
+3. Download zip file from [Releases](https://github.com/mugifly/atom-lite-dishwasher-detergent-sensor/releases), then unarchive it.<br> / [Releases](https://github.com/mugifly/atom-lite-dishwasher-detergent-sensor/releases) から ZIP ファイルをダウンロードし、バイナリファイルを展開します。
 
-4. Connect ATOM Lite and PC with a USB-C to A cable. Then, Upload a sketch to ATOM Lite, with using Arduino IDE.<br> / ATOM Lite と PC を USB-C to A ケーブルで接続したのち、以下のコマンドを使って、ATOM Lite へファイルを書き込みます。<br><pre>esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 1500000 --before default_reset \\
+4. Connect ATOM Lite and PC with a USB-C to A cable. Then, Upload the binary files to ATOM Lite, with using Arduino IDE.<br> / ATOM Lite と PC を USB-C to A ケーブルで接続したのち、以下のコマンドを使って、ATOM Lite へバイナリファイルを書き込みます。<br><pre>esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 1500000 --before default_reset \\
    --after hard_reset write_flash -z --flash_mode dio --flash_freq 80m --flash_size detect \\
    0xe000 boot_app0.bin \\
    0x1000 bootloader_dio_80m.bin \\
