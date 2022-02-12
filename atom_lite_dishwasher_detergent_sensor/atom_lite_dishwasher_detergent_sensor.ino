@@ -21,7 +21,7 @@
 // Configurations
 #define LOADCELL_DOUT_PIN 25 //32
 #define LOADCELL_SCK_PIN 21 //26
-#define LOADCELL_CARIBRATION_KNOWN_WEIGHT_GRAM 4.8 // Weight of 100 yen (JPY)
+#define LOADCELL_CALIBRATION_KNOWN_WEIGHT_GRAM 4.8 // Weight of 100 yen (JPY)
 
 #define LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM 10
 
@@ -34,7 +34,7 @@
 
 // Loadcell sensor (scale)
 HX711 loadcell;
-float loadcellCaribratationDivider = 515.21;
+float loadcellCalibrationDivider = 515.21;
 float detergentBottleWeight = 0.0;
 float rawWeight = 0.0;
 float beforeRawWeight = 0.0;
@@ -81,7 +81,7 @@ void setup() {
 
   // Initialize loadcell (scale)
   loadcell.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
-  loadcell.set_scale(loadcellCaribratationDivider);
+  loadcell.set_scale(loadcellCalibrationDivider);
   loadcell.tare();
 
   // Initialize Wi-Fi for Integration and Configuration
@@ -126,10 +126,10 @@ void loadConfig() {
     return;
   }
 
-  if (json["loadcell_caribratation_divider"]) {
-    float loadcell_caribratation_divider = json["loadcell_caribratation_divider"];
-    loadcellCaribratationDivider = loadcell_caribratation_divider;
-    Serial.println("loadcell_caribratation_divider = " + String(loadcell_caribratation_divider));
+  if (json["loadcell_calibration_divider"]) {
+    float loadcell_calibration_divider = json["loadcell_calibration_divider"];
+    loadcellCalibrationDivider = loadcell_calibration_divider;
+    Serial.println("loadcell_calibration_divider = " + String(loadcell_calibration_divider));
   }
 
   strcpy(integrationHassioHost, json["hassio_host"]);
@@ -151,7 +151,7 @@ void saveConfig() {
   Serial.println("saveConfig - Saving config to SPIFFS...");
   DynamicJsonDocument json(1024);
 
-  json["loadcell_caribratation_divider"] = loadcellCaribratationDivider;
+  json["loadcell_calibration_divider"] = loadcellCalibrationDivider;
 
   json["hassio_host"] = integrationHassioHost;
   json["hassio_token"] = integrationHassioToken;
@@ -215,9 +215,9 @@ void calibrateLoadcell() {
   }
   delay(3000);
   rawWeight = loadcell.get_units(10);
-  loadcellCaribratationDivider = rawWeight / LOADCELL_CARIBRATION_KNOWN_WEIGHT_GRAM;
-  Serial.println("calibrateLoadcell - Divider = " + String(loadcellCaribratationDivider));
-  loadcell.set_scale(loadcellCaribratationDivider);
+  loadcellCalibrationDivider = rawWeight / LOADCELL_CALIBRATION_KNOWN_WEIGHT_GRAM;
+  Serial.println("calibrateLoadcell - Divider = " + String(loadcellCalibrationDivider));
+  loadcell.set_scale(loadcellCalibrationDivider);
   rawWeight = loadcell.get_units(10);
   beforeRawWeight = rawWeight;
   Serial.println(rawWeight);
@@ -317,7 +317,7 @@ void sendStatusToHomeAssistant(bool statusChanged) {
   Serial.println(url);
 
   char postBody[255];
-  sprintf(postBody, "{\"state\": \"%s\", \"attributes\": {\"rawWeight\": %f, \"bottleWeight\": %f, \"loadcellCaribratationDivider\": %f, \"time\": %u, \"statusUpdatedAt\": %u}}", statusText.c_str(), rawWeight, detergentBottleWeight, loadcellCaribratationDivider, millis(), statusUpdatedAt);
+  sprintf(postBody, "{\"state\": \"%s\", \"attributes\": {\"rawWeight\": %f, \"bottleWeight\": %f, \"loadcellCalibrationDivider\": %f, \"time\": %u, \"statusUpdatedAt\": %u}}", statusText.c_str(), rawWeight, detergentBottleWeight, loadcellCalibrationDivider, millis(), statusUpdatedAt);
   Serial.println(postBody);
 
   HTTPClient http;
