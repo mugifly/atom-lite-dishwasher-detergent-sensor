@@ -19,15 +19,14 @@
 #include "ArduinoJson.h"
 
 // Configurations
-#define LOADCELL_DOUT_PIN 32
-#define LOADCELL_SCK_PIN 26
-#define LOADCELL_DIVIDER 5895655
-#define LOADCELL_OFFSET 50682624
+#define LOADCELL_DOUT_PIN 25 //32
+#define LOADCELL_SCK_PIN 21 //26
+#define LOADCELL_CARIBRATION_KNOWN_WEIGHT_GRAM 4.8 // Weight of 100 yen (JPY)
 
 #define LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM 10
 
 #define DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM 100
-#define DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM 8
+#define DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM 9
 #define DETERGENT_MIN_USAGE_THRESHOLD_WEIGHT_GRAM 5
 #define DETERGENT_USAGE_RESETTING_INTERVAL_MILISEC 5400000 // Reset the status after 1.5 hours passed after using detergent
 
@@ -35,8 +34,10 @@
 
 // Loadcell sensor (scale)
 HX711 loadcell;
+float loadcellCaribratationDivider = 515.21;
 float detergentBottleWeight = 0.0;
 float rawWeight = 0.0;
+float beforeRawWeight = 0.0;
 
 // For Integration with IFTTT / Home Assistant (Hass.io)
 WiFiManager wifiManager;
@@ -74,15 +75,19 @@ void setup() {
 
   Serial.begin(115200);
 
-  loadcell.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
-  loadcell.set_scale(LOADCELL_DIVIDER);
-  loadcell.set_offset(LOADCELL_OFFSET);
-
+  // Load config for Loadcell (scale) and Integration
   SPIFFS.begin(true);
+  loadConfig();
 
+  // Initialize loadcell (scale)
+  loadcell.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  loadcell.set_scale(loadcellCaribratationDivider);
+  loadcell.tare();
+
+  // Initialize Wi-Fi for Integration and Configuration
   WiFi.mode(WIFI_STA);
-
   wifiManager.setConfigPortalBlocking(false);
+  wifiManager.setConfigPortalTimeout(600); // Auto close configportal after 10 minutes
 
   const char* custom_html =
     "<h2 style=\"margin: 0.2rem 0 0 0;\">Integration</h2><h3>Home Assistant</h3>URL of Home Assistant:<br/><input type=\"text\" name=\"hassio_host\" placeholder=\"https://example.com/\"><br/>Access Token:<br/><input type=\"text\" name=\"hassio_token\" placeholder=\"XXXXXXXXXXXXXXXXXXXXXX\"><br/>Entity ID (sensor.XXXXXX):<br/><input type=\"text\" name=\"hassio_entity_id\" placeholder=\"dishwasher_detergent\" value=\"dishwasher_detergent\"><br/><h3>IFTTT</h3>Webhook Event Name:<br/><input type=\"text\" name=\"ifttt_event_name\" value=\"detergent_updated\" placeholder=\"detergent_updated\"><br/>Webhooks Key:<br/><input type=\"text\" name=\"ifttt_key\" placeholder=\"XXXXXXXXXXXXXXXXXXXXXX\"><br/><hr/>";
@@ -100,9 +105,6 @@ void setup() {
   Serial.println("Connected to Wi-Fi.");
   M5.dis.drawpix(0, 0x0000f0); // LED is blinking blue
   delay(500);
-
-  // Load config for integration
-  loadConfig();
 
 }
 
@@ -124,11 +126,18 @@ void loadConfig() {
     return;
   }
 
+  if (json["loadcell_caribratation_divider"]) {
+    float loadcell_caribratation_divider = json["loadcell_caribratation_divider"];
+    loadcellCaribratationDivider = loadcell_caribratation_divider;
+    Serial.println("loadcell_caribratation_divider = " + String(loadcell_caribratation_divider));
+  }
+
   strcpy(integrationHassioHost, json["hassio_host"]);
   strcpy(integrationHassioToken, json["hassio_token"]);
   strcpy(integrationHassioEntityId, json["hassio_entity_id"]);
   strcpy(integrationIFTTTEventName, json["ifttt_event_name"]);
   strcpy(integrationIFTTTKey, json["ifttt_key"]);
+
   Serial.println("hassio_host = " + String(integrationHassioHost));
   Serial.println("hassio_token = " + String(integrationHassioToken));
   Serial.println("hassio_entity_id = " + String(integrationHassioEntityId));
@@ -136,6 +145,33 @@ void loadConfig() {
   Serial.println("ifttt_key = " + String(integrationIFTTTKey));
 
   file.close();
+}
+
+void saveConfig() {
+  Serial.println("saveConfig - Saving config to SPIFFS...");
+  DynamicJsonDocument json(1024);
+
+  json["loadcell_caribratation_divider"] = loadcellCaribratationDivider;
+
+  json["hassio_host"] = integrationHassioHost;
+  json["hassio_token"] = integrationHassioToken;
+  json["hassio_entity_id"] = integrationHassioEntityId;
+  json["ifttt_event_name"] = integrationIFTTTEventName;
+  json["ifttt_key"] = integrationIFTTTKey;
+
+  File file = SPIFFS.open("/config.json", "w");
+  if (!file) {
+    Serial.println("Error: Could not open config.json");
+    return;
+  }
+  serializeJson(json, Serial);
+  serializeJson(json, file);
+  file.close();
+
+  Serial.println("saveConfig - Config saved");
+
+  loadConfig();
+
 }
 
 String getWifiManagerParam(String name) {
@@ -148,40 +184,61 @@ String getWifiManagerParam(String name) {
 }
 
 void wifiManagerSaveParamCallback() {
-  Serial.println("wifiManagerSaveParamCallback - Saving config to SPIFFS...");
-  DynamicJsonDocument json(1024);
-  json["hassio_host"] = getWifiManagerParam("hassio_host");
-  json["hassio_token"] = getWifiManagerParam("hassio_token");
-  json["hassio_entity_id"] = getWifiManagerParam("hassio_entity_id");
-  json["ifttt_event_name"] = getWifiManagerParam("ifttt_event_name");
-  json["ifttt_key"] = getWifiManagerParam("ifttt_key");
-
-  File file = SPIFFS.open("/config.json", "w");
-  if (!file) {
-    Serial.println("Error: Could not open config.json");
-    return;
-  }
-  serializeJson(json, Serial);
-  serializeJson(json, file);
-  file.close();
-
-  Serial.println("wifiManagerSaveParamCallback - Config saved");
-
-  loadConfig();
+  Serial.println("wifiManagerSaveParamCallback");
+  strcpy(integrationHassioHost, getWifiManagerParam("hassio_host").c_str());
+  strcpy(integrationHassioToken, getWifiManagerParam("hassio_token").c_str());
+  strcpy(integrationHassioEntityId, getWifiManagerParam("hassio_entity_id").c_str());
+  strcpy(integrationIFTTTEventName, getWifiManagerParam("ifttt_event_name").c_str());
+  strcpy(integrationIFTTTKey, getWifiManagerParam("ifttt_key").c_str());
+  saveConfig();
 }
 
-void resetLoadcell() {
-  loadcell.tare(10);
-  status = LOADCELL_RESETTED;
+void calibrateLoadcell() {
+  Serial.println("calibrateLoadcell - Resetting...");
+  for (int i = 0; i < 5; i++) {
+    M5.dis.drawpix(0, 0x00f0f0);
+    delay(100);
+    M5.dis.drawpix(0, 0x000000);
+    delay(100);
+  }
+  delay(1000);
+  loadcell.set_scale();
+  loadcell.tare();
+  delay(3000);
+
+  Serial.println("calibrateLoadcell - Please place a known weight...");
+  for (int i = 0; i < 5; i++) {
+    M5.dis.drawpix(0, 0x00f0f0);
+    delay(100);
+    M5.dis.drawpix(0, 0x000000);
+    delay(100);
+  }
+  delay(3000);
   rawWeight = loadcell.get_units(10);
-  detergentBottleWeight = rawWeight;
+  loadcellCaribratationDivider = rawWeight / LOADCELL_CARIBRATION_KNOWN_WEIGHT_GRAM;
+  Serial.println("calibrateLoadcell - Divider = " + String(loadcellCaribratationDivider));
+  loadcell.set_scale(loadcellCaribratationDivider);
+  rawWeight = loadcell.get_units(10);
+  beforeRawWeight = rawWeight;
+  Serial.println(rawWeight);
+
+  saveConfig();
+
+  status = LOADCELL_RESETTED;
 }
 
 void measureRemainingAmount() {
   unsigned long now = millis();
-  rawWeight = loadcell.get_units(10);
 
-  if (abs(detergentBottleWeight - rawWeight) <= 1) { // weight is almost not changed
+  rawWeight = loadcell.get_units(10);
+  if (10 <= abs(beforeRawWeight - rawWeight)) { // weight is still unstable
+    // Wait until the weight stablizes
+    beforeRawWeight = rawWeight;
+    return;
+  }
+  beforeRawWeight = rawWeight;
+
+  if (abs(detergentBottleWeight - rawWeight) <= 1) { // bottle weight is almost not changed
     switch (status) {
       case DETERGENT_USUALLY_USED:
       case DETERGENT_EXTRA_USED:
@@ -195,9 +252,9 @@ void measureRemainingAmount() {
           sendStatusToHomeAssistant(true);
           sendStatusToIFTTT();
         }
+        return;
         break;
     };
-    return;
   }
 
   Status newStatus = status;
@@ -252,7 +309,7 @@ void sendStatusToHomeAssistant(bool statusChanged) {
 
   Serial.println("sendStatusToHomeAssistant - Requesting...");
   integrationHassioLastStatusSentAt = now;
-  
+
   if (baseUrl.charAt(baseUrl.length() - 1) != '/') {
     baseUrl += "/";
   }
@@ -260,7 +317,7 @@ void sendStatusToHomeAssistant(bool statusChanged) {
   Serial.println(url);
 
   char postBody[255];
-  sprintf(postBody, "{\"state\": \"%s\", \"attributes\": {\"rawWeight\": %f, \"bottleWeight\": %f, \"time\": %u, \"statusUpdatedAt\": %u}}", statusText.c_str(), rawWeight, detergentBottleWeight, millis(), statusUpdatedAt);
+  sprintf(postBody, "{\"state\": \"%s\", \"attributes\": {\"rawWeight\": %f, \"bottleWeight\": %f, \"loadcellCaribratationDivider\": %f, \"time\": %u, \"statusUpdatedAt\": %u}}", statusText.c_str(), rawWeight, detergentBottleWeight, loadcellCaribratationDivider, millis(), statusUpdatedAt);
   Serial.println(postBody);
 
   HTTPClient http;
@@ -362,7 +419,7 @@ void showStatus() {
       numOfBlinks = 2;
       break;
     case MEASURED_WEIGHT_INVALID:
-      color = 0, 0x00f000; // red
+      color = 0x00f000; // red
       numOfBlinks = -1; // fast blinking
       break;
   };
@@ -404,11 +461,10 @@ void loop() {
   M5.update();
   wifiManager.process();
 
-  // Set status
-  if (M5.Btn.pressedFor(5000)) {
+  if (M5.Btn.wasReleasefor(8000)) {
     resetWiFiSettings();
-  } else if (M5.Btn.wasPressed()) {
-    resetLoadcell();
+  } else if (M5.Btn.wasReleasefor(1000)) {
+    calibrateLoadcell();
   } else {
     measureRemainingAmount();
   }
