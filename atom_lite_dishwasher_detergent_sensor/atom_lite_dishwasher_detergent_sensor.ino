@@ -26,7 +26,7 @@
 #define LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM 10
 
 #define DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM 100
-#define DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM 9
+#define DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM 8
 #define DETERGENT_MIN_USAGE_THRESHOLD_WEIGHT_GRAM 5
 #define DETERGENT_USAGE_RESETTING_INTERVAL_MILISEC 5400000 // Reset the status after 1.5 hours passed after using detergent
 
@@ -238,7 +238,7 @@ void measureRemainingAmount() {
   }
   beforeRawWeight = rawWeight;
 
-  if (abs(detergentBottleWeight - rawWeight) <= 1) { // bottle weight is almost not changed
+  if (abs(detergentBottleWeight - rawWeight) <= 1.5) { // bottle weight is almost not changed
     switch (status) {
       case DETERGENT_USUALLY_USED:
       case DETERGENT_EXTRA_USED:
