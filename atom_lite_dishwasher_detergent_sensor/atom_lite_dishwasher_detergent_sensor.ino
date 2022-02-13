@@ -19,13 +19,13 @@
 #include "ArduinoJson.h"
 
 // Configurations
-#define LOADCELL_DOUT_PIN 25 //32
-#define LOADCELL_SCK_PIN 21 //26
+#define LOADCELL_DOUT_PIN 32
+#define LOADCELL_SCK_PIN 26
 #define LOADCELL_CALIBRATION_KNOWN_WEIGHT_GRAM 4.8 // Weight of 100 yen (JPY)
 
-#define LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM 10
+#define LOADCELL_VALID_MINIMUM_THRESHOLD_WEIGHT_GRAM 20
 
-#define DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM 100
+#define DETERGENT_ONLY_FEW_LEFT_THRESHOLD_WEIGHT_GRAM 160
 #define DETERGENT_EXTRA_USAGE_THRESHOLD_WEIGHT_GRAM 8
 #define DETERGENT_MIN_USAGE_THRESHOLD_WEIGHT_GRAM 5
 #define DETERGENT_USAGE_RESETTING_INTERVAL_MILISEC 5400000 // Reset the status after 1.5 hours passed after using detergent
@@ -238,7 +238,7 @@ void measureRemainingAmount() {
   }
   beforeRawWeight = rawWeight;
 
-  if (abs(detergentBottleWeight - rawWeight) <= 1.5) { // bottle weight is almost not changed
+  if (abs(detergentBottleWeight - rawWeight) <= 2.0) { // bottle weight is almost not changed
     switch (status) {
       case DETERGENT_USUALLY_USED:
       case DETERGENT_EXTRA_USED:
