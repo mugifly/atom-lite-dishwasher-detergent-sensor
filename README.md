@@ -20,13 +20,22 @@ https://youtu.be/9q-ngajI_L4
 
 ## Equipment to be used / 使用機材
 
+Must to have:
+
 - ATOM Lite (or compatible board)
 
-  - e.g. https://www.switch-science.com/catalog/6262/
+  - https://www.switch-science.com/catalog/6262/
 
-- Load cell with HX711 A/D converter
+- Loadcell with HX711 A/D converter
 
-  - e.g. https://www.amazon.co.jp/gp/product/B07JL7NP3F/
+  - e.g., https://www.amazon.co.jp/gp/product/B07JL7NP3F/
+
+Nice to have:
+
+- Grove - 4 pin Female Jumper to Grove 4 pin Conversion Cable
+
+  - https://www.switch-science.com/catalog/1048/
+  - https://www.seeedstudio.com/Grove-4-pin-Female-Jumper-to-Grove-4-pin-Conversion-Cable-5-PCs-per-PAck.html
 
 - USB-C to A cable
 
@@ -36,12 +45,16 @@ https://youtu.be/9q-ngajI_L4
 
 ### Setup / セットアップ
 
-1. Connect ATOM Lite and Loadcell with HX711 A/D converter with a cable.<br> / ATOM Lite と Loadcell with HX711 A/D converter をケーブルで接続します。
+1. Connect ATOM Lite and Loadcell with HX711 A/D converter with a cable. <br> / ATOM Lite と Loadcell with HX711 A/D converter をケーブルで接続します。<br>
 
-   - 5V
-   - GND
-   - DOUT (to G25) / DOUT (G25 ピンへ)
-   - SCK (to G21) / SCK (G21 ピンへ)
+   - Recommended pins:<br>NOTE: ATOM Lite's Grove connector and [Grove cable](https://www.seeedstudio.com/Grove-4-pin-Female-Jumper-to-Grove-4-pin-Conversion-Cable-5-PCs-per-PAck.html) makes it easy to connect the following pins together.<br> / ATOM Lite の Grove コネクタと [Grove ケーブル](https://www.seeedstudio.com/Grove-4-pin-Female-Jumper-to-Grove-4-pin-Conversion-Cable-5-PCs-per-PAck.html) を使うと、以下のピンをまとめて接続できて便利です。
+
+     - 5V - 5V
+     - GND - GND
+     - DOUT (DT) - G32 pin
+     - SCK - G26 pin
+
+   - Or, if you want to use different pin, you need to edit `LOADCELL_DOUT_PIN` and `LOADCELL_SCK_PIN` constant value in the sketch.<br> / もしくは、もし異なるピンへ接続する場合は、スケッチの定数 `LOADCELL_DOUT_PIN` および `LOADCELL_SCK_PIN` を編集する必要があります。
 
 2. Install [esptool](https://github.com/espressif/esptool/releases) on your PC.<br> / PC に [esptool](https://github.com/espressif/esptool/releases) をインストールします。
 
